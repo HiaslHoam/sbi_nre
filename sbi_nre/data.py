@@ -29,8 +29,9 @@ def load_grid(path, *, device='cpu'):
             data = {key: torch.as_tensor(archive[key]) for key in archive.files}
     else:
         data = torch.load(path, map_location=device, weights_only=True)
-    data = {key: torch.as_tensor(value, device=device) for key, value in data.items()}
-    data = {key: value.float() if value.is_floating_point() else value for key, value in data.items()}
+    data = {key: torch.as_tensor(value) for key, value in data.items()}
+    # float32 before moving: Apple GPUs (MPS) do not support float64.
+    data = {key: (value.float() if value.is_floating_point() else value).to(device) for key, value in data.items()}
     n_samples(data)
     return data
 
@@ -48,7 +49,10 @@ def select(data, index):
 
 
 def to_device(data, device):
-    return {key: value.to(device) for key, value in data.items()}
+    """Move a grid to ``device``; float64 becomes float32 on Apple GPUs (MPS), which lack float64."""
+    mps = torch.device(device).type == 'mps'
+    return {key: (value.float() if mps and value.dtype == torch.float64 else value).to(device)
+            for key, value in data.items()}
 
 
 def split(data, fractions=(0.8, 0.1, 0.1), *, seed=0):

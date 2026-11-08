@@ -69,18 +69,52 @@ def plot_posterior(result, truths=None, *, bins=40, ncols=4, zoom=True):
     return fig
 
 
-def plot_marginals(result, truths=None, *, bins=40, zoom=True):
-    """1D posterior of every parameter, pooled over the groups that contain it."""
-    params = list(dict.fromkeys(p for g in result.values() for p in g['samples']))
+def plot_marginals(result, truths=None, *, bins=40, zoom=True, groups=None):
+    """1D posterior of every parameter, pooled over the groups that contain it.
+
+    groups: optional list of group names to pool from (see posterior.marginal).
+    """
+    params = list(dict.fromkeys(p for name, g in result.items() if groups is None or name in groups
+                                for p in g['samples']))
     fig, axes = plt.subplots(1, len(params), figsize=(3.2 * len(params), 3), squeeze=False)
     for ax, p in zip(axes.flat, params):
-        samples, weights = marginal(result, p)
+        samples, weights = marginal(result, p, groups)
         span = _zoom(samples, weights) if zoom else (float(samples.min()), float(samples.max()))
         ax.hist(samples.cpu().numpy(), bins=bins, range=span, weights=weights.cpu().numpy(),
                 color='tomato', alpha=.7)
         if truths and p in truths:
             ax.axvline(float(truths[p]), color='k', ls='--', label='truth')
         ax.set(xlabel=p, yticks=[])
+    fig.tight_layout()
+    return fig
+
+
+def plot_coverage(levels, *, ncols=4):
+    """Expected coverage: for every credibility level, the fraction of test simulations
+    whose true parameters lie inside the credible region of that level.
+
+    levels: {group name: array} from credibility_of_truth. A calibrated network
+    follows the diagonal (within the grey band, the scatter expected from a finite
+    test set). Above it the posteriors are too wide (conservative), below it too
+    narrow (overconfident).
+    """
+    names = list(levels)
+    ncols = min(ncols, len(names))
+    nrows = math.ceil(len(names) / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.4 * ncols, 3.4 * nrows), squeeze=False)
+    alpha = np.linspace(0, 1, 101)
+    for ax, name in zip(axes.flat, names):
+        values = np.asarray(levels[name])
+        band = 1.96 * np.sqrt(alpha * (1 - alpha) / len(values))
+        ax.fill_between(alpha, alpha - band, alpha + band, color='grey', alpha=.3, lw=0)
+        ax.plot([0, 1], [0, 1], 'k--', lw=1)
+        ax.plot(alpha, (values[:, None] <= alpha).mean(0), color='tomato', lw=2)
+        ax.text(.05, .9, 'conservative', fontsize=8, color='grey')
+        ax.text(.55, .05, 'overconfident', fontsize=8, color='grey')
+        ax.set(xlim=(0, 1), ylim=(0, 1), title=name, aspect='equal',
+               xlabel='credibility level', ylabel='fraction of truths inside')
+    for ax in axes.flat[len(names):]:
+        ax.axis('off')
     fig.tight_layout()
     return fig
 

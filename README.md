@@ -18,13 +18,24 @@ network gives the posterior for any new observation in a fraction of a second.
 ## Install
 
 ```bash
-git clone <this repository> SBI_NRE
-cd SBI_NRE
+git clone https://github.com/HiaslHoam/sbi_nre.git
+cd sbi_nre
 python -m pip install -e .          # needs torch, numpy, matplotlib
 ```
 
-Then open `notebooks/01_quickstart.ipynb` and run all cells (a few minutes on a
-laptop CPU, less on a GPU).
+Then open `notebooks/01_quickstart.ipynb` and run all cells (a few minutes).
+
+### Hardware
+
+No special hardware is needed. The notebooks pick the device automatically:
+
+| Device | Works? |
+|---|---|
+| NVIDIA GPU (`cuda`) | yes, fastest for large grids and networks |
+| Apple silicon GPU (`mps`, M1–M4 Macs) | yes, with PyTorch ≥ 2.0 (data are kept in float32, which MPS needs) |
+| CPU only (any laptop) | yes; the toy notebooks are small enough |
+
+To force a device, set `DEVICE = 'cpu'` (or `'cuda'`, `'mps'`) in the first cell.
 
 ## Notebooks
 
@@ -94,7 +105,7 @@ sbi_nre/
   training.py    the NRE loss and the training loop; writes the run folder
   runs.py        load a run
   posterior.py   posteriors by re-weighting prior samples; summaries; save/load
-  plotting.py    training curves, posteriors, true-vs-median checks
+  plotting.py    training curves, posteriors, true-vs-median and coverage checks
   toy.py         the toy simulator used in the quickstart
 notebooks/       01 quickstart, 02 template for your own grid
 tests/           quick checks: python -m pytest
@@ -116,4 +127,5 @@ tests/           quick checks: python -m pytest
 - **Reproducibility.** `split` and `train` take a `seed`; all settings are stored in
   `config.json`.
 - **Checking your network.** A true-vs-median plot on test simulations (notebooks
-  01 and 02) is the first check; formal calibration tests (e.g. coverage) come next.
+  01 and 02) is the first check. The coverage test (`credibility_of_truth` and
+  `plot_coverage`, notebook 01) then checks that the uncertainties are right.

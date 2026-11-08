@@ -4,6 +4,12 @@ Each training step takes a batch of simulations and builds
 
 * matching pairs: data and the parameters that produced it (label 1);
 * mismatched pairs: the same data with parameters shuffled across the batch (label 0).
+  With n_negatives > 1, every observation is paired with that many differently
+  shuffled parameter sets; their loss is averaged so that matching and mismatched
+  pairs keep equal weight (the optimal classifier is still log r). Mismatched
+  pairs cost no simulations, and many of them help groups with narrow posteriors
+  (e.g. joint groups of many parameters), whose classifier otherwise rarely sees
+  mismatched parameters close to the truth and learns posteriors that are too wide.
 
 Every parameter group's classifier learns to tell them apart (binary
 cross-entropy). The loss reported is the mean over groups; it starts near
@@ -23,16 +29,22 @@ from .network import group_name
 from .transforms import apply
 
 
-def nre_loss(model, data, generator=None):
-    """{group name: loss} for one batch of preprocessed data."""
+def nre_loss(model, data, generator=None, n_negatives=1):
+    """{group name: loss} for one batch of preprocessed data.
+
+    n_negatives: number of mismatched parameter sets per observation.
+    """
     summary = model.summary(data)
     n = len(summary)
-    shuffled = torch.randperm(n, device=summary.device, generator=generator)
-    ones, zeros = torch.ones(n, device=summary.device), torch.zeros(n, device=summary.device)
+    perm_device = generator.device if generator is not None else summary.device
+    shuffled = torch.cat([torch.randperm(n, device=perm_device, generator=generator)
+                          for _ in range(n_negatives)]).to(summary.device)
+    repeated_summary = summary.repeat(n_negatives, 1)
+    ones, zeros = torch.ones(n, device=summary.device), torch.zeros(n * n_negatives, device=summary.device)
     losses = {}
     for group in model.param_groups:
         matching = model.log_ratio(summary, data, group)
-        mismatched = model.log_ratio(summary, {p: data[p][shuffled] for p in group}, group)
+        mismatched = model.log_ratio(repeated_summary, {p: data[p][shuffled] for p in group}, group)
         losses[group_name(group)] = (F.binary_cross_entropy_with_logits(matching, ones)
                                      + F.binary_cross_entropy_with_logits(mismatched, zeros))
     return losses
@@ -44,12 +56,13 @@ def _write_json(path, content):
 
 def train(model, training, validation, run_dir, *, augment=(), preprocess=(), batch_size=256,
           learning_rate=1e-3, max_epochs=50, patience=10, seed=0, device='cpu',
-          save_every_epoch=False, notes=''):
+          n_negatives=1, save_every_epoch=False, notes=''):
     """Train the model and save everything needed to reload it in ``run_dir``.
 
     training, validation: raw simulation grids (dictionaries of tensors).
     augment, preprocess: lists of ``step(...)`` (see transforms.py).
     patience: stop when the validation loss has not improved for this many epochs.
+    n_negatives: mismatched parameter sets per observation (see nre_loss).
     save_every_epoch: also keep a checkpoint of every epoch in run_dir/epochs/.
 
     The run folder holds config.json, history.json, best.pt (lowest validation
@@ -65,7 +78,8 @@ def train(model, training, validation, run_dir, *, augment=(), preprocess=(), ba
         'augment': augment,
         'preprocess': preprocess,
         'training': {'batch_size': batch_size, 'learning_rate': learning_rate,
-                     'max_epochs': max_epochs, 'patience': patience, 'seed': seed},
+                     'max_epochs': max_epochs, 'patience': patience, 'seed': seed,
+                     'n_negatives': n_negatives},
         'data': {'n_training': n_samples(training), 'n_validation': n_samples(validation),
                  'keys': sorted(training)},
     })
@@ -90,7 +104,7 @@ def train(model, training, validation, run_dir, *, augment=(), preprocess=(), ba
         model.train()
         total = 0.
         for batch in batches(training, batch_size, shuffle=True):
-            losses = nre_loss(model, prepare(batch))
+            losses = nre_loss(model, prepare(batch), n_negatives=n_negatives)
             loss = sum(losses.values()) / len(losses)
             optimizer.zero_grad()
             loss.backward()
@@ -100,10 +114,11 @@ def train(model, training, validation, run_dir, *, augment=(), preprocess=(), ba
 
         model.eval()
         group_totals = dict.fromkeys(history['val_loss_groups'], 0.)
-        generator = torch.Generator(device=device).manual_seed(seed + 1)  # Same shuffles every epoch.
+        # Same shuffles every epoch. On a CPU generator except for CUDA (not every PyTorch supports MPS generators).
+        generator = torch.Generator(device=device if torch.device(device).type == 'cuda' else 'cpu').manual_seed(seed + 1)
         with torch.no_grad():
             for batch in batches(validation, batch_size):
-                for name, value in nre_loss(model, batch, generator).items():
+                for name, value in nre_loss(model, batch, generator, n_negatives).items():
                     group_totals[name] += value.item() * n_samples(batch)
         group_losses = {name: value / n_samples(validation) for name, value in group_totals.items()}
         val_loss = sum(group_losses.values()) / len(group_losses)
@@ -129,8 +144,8 @@ def train(model, training, validation, run_dir, *, augment=(), preprocess=(), ba
             epochs_since_best += 1
         _write_json(run_dir / 'history.json', history)
         print(f'epoch {epoch:3d}  train {train_loss:.4f}  validation {val_loss:.4f}'
-              f'{"  *best" if improved else ""}  ({history["seconds"][-1]:.1f} s)')
+              f'{"  *best" if improved else ""}  ({history["seconds"][-1]:.1f} s)', flush=True)
         if epochs_since_best >= patience:
-            print(f'Stopping: no improvement for {patience} epochs.')
+            print(f'Stopping: no improvement for {patience} epochs.', flush=True)
             break
     return history

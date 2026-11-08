@@ -19,16 +19,23 @@ The network has two parts:
 
 Inputs and parameters are standardised (zero mean, unit variance) with
 statistics computed once from the training set and stored in the network.
+
+Optional extras (all off by default), as in the Clipppy networks of Karchev et al.:
+param_embedding passes each group's parameters through a small network before
+they meet the summary; layer_norm adds LayerNorm after every hidden layer; and
+output='leakypop' maps the classifier output x to x + sign(x) x^2, which makes
+large log ratios (very narrow posteriors) easier to reach.
 """
 import torch
 from torch import nn
 
 
-def mlp(n_in, hidden, n_out):
-    """Fully connected network with ReLU activations."""
+def mlp(n_in, hidden, n_out, layer_norm=False):
+    """Fully connected network with ReLU activations (and LayerNorm if requested)."""
     layers = []
     for width in hidden:
-        layers += [nn.Linear(n_in, width), nn.ReLU()]
+        layers += [nn.Linear(n_in, width), *([nn.LayerNorm(width, elementwise_affine=False)] if layer_norm else []),
+                   nn.ReLU()]
         n_in = width
     layers.append(nn.Linear(n_in, n_out))
     return nn.Sequential(*layers)
@@ -50,20 +57,31 @@ class RatioEstimator(nn.Module):
     """
 
     def __init__(self, observation_sizes, context_sizes, param_groups, *, summary_size=64,
-                 hidden=(256, 256), tail_hidden=(128, 128)):
+                 hidden=(256, 256), tail_hidden=(128, 128), param_embedding=None,
+                 layer_norm=False, output='linear'):
         super().__init__()
         input_sizes = {**observation_sizes, **context_sizes}
         self.settings = {'observation_sizes': dict(observation_sizes),
                          'context_sizes': dict(context_sizes),
                          'param_groups': [list(g) for g in param_groups],
                          'summary_size': summary_size, 'hidden': list(hidden),
-                         'tail_hidden': list(tail_hidden)}
+                         'tail_hidden': list(tail_hidden),
+                         'param_embedding': list(param_embedding) if param_embedding else None,
+                         'layer_norm': layer_norm, 'output': output}
+        if output not in ('linear', 'leakypop'):
+            raise ValueError("output must be 'linear' or 'leakypop'.")
+        self.output = output
         self.input_keys = tuple(input_sizes)
         self.param_groups = tuple(tuple(g) for g in param_groups)
         self.param_names = tuple(dict.fromkeys(p for g in self.param_groups for p in g))
         n_inputs = sum(input_sizes.values())
-        self.embedding = mlp(n_inputs, hidden, summary_size)
-        self.tails = nn.ModuleDict({group_name(g): mlp(summary_size + len(g), tail_hidden, 1)
+        self.embedding = mlp(n_inputs, hidden, summary_size, layer_norm)
+        # param_embedding [h..., out]: hidden widths and output size of the parameter network.
+        self.param_embeddings = nn.ModuleDict({
+            group_name(g): mlp(len(g), param_embedding[:-1], param_embedding[-1], layer_norm)
+            for g in self.param_groups} if param_embedding else {})
+        n_theta = (lambda g: param_embedding[-1]) if param_embedding else len
+        self.tails = nn.ModuleDict({group_name(g): mlp(summary_size + n_theta(g), tail_hidden, 1, layer_norm)
                                     for g in self.param_groups})
         self.register_buffer('input_mean', torch.zeros(n_inputs))
         self.register_buffer('input_std', torch.ones(n_inputs))
@@ -95,7 +113,10 @@ class RatioEstimator(nn.Module):
         """log r for one parameter group; params is a dict holding the group's parameters."""
         index = [self.param_names.index(name) for name in group]
         theta = (self._raw_params(params, group) - self.param_mean[index]) / self.param_std[index]
-        return self.tails[group_name(group)](torch.cat([summary, theta], dim=1)).squeeze(1)
+        if self.param_embeddings:
+            theta = self.param_embeddings[group_name(group)](theta)
+        x = self.tails[group_name(group)](torch.cat([summary, theta], dim=1)).squeeze(1)
+        return x + torch.sign(x) * x ** 2 if self.output == 'leakypop' else x
 
 
 def build_model(data, param_groups, observation, context=(), **network):
@@ -104,7 +125,7 @@ def build_model(data, param_groups, observation, context=(), **network):
     data: a (preprocessed) batch containing the observation and context keys.
     param_groups: e.g. [('a', 'b'), ('c',)].
     observation, context: lists of data keys given to the network.
-    network: optional summary_size, hidden and tail_hidden.
+    network: optional summary_size, hidden, tail_hidden, param_embedding, layer_norm, output.
     """
     missing = ({p for g in param_groups for p in g} | set(observation) | set(context)) - set(data)
     if missing:

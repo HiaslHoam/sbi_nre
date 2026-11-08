@@ -19,9 +19,9 @@ Typical workflow::
 """
 from .data import batches, load_grid, n_samples, save_grid, select, split, to_device
 from .network import RatioEstimator, build_model
-from .posterior import (coverage, effective_sample_size, load_posterior, marginal, posterior, save_posterior,
+from .posterior import (coverage, credibility_of_truth, effective_sample_size, load_posterior, marginal, posterior, save_posterior,
                         summarise, uniform_prior_samples, weighted_quantiles)
-from .plotting import plot_history, plot_marginals, plot_posterior, plot_true_vs_median
+from .plotting import plot_coverage, plot_history, plot_marginals, plot_posterior, plot_true_vs_median
 from .runs import Run, load_run
 from .training import nre_loss, train
 from .transforms import TRANSFORMS, apply, step, transform
@@ -29,8 +29,8 @@ from .transforms import TRANSFORMS, apply, step, transform
 __all__ = [
     'batches', 'load_grid', 'n_samples', 'save_grid', 'select', 'split', 'to_device',
     'RatioEstimator', 'build_model',
-    'coverage', 'effective_sample_size', 'load_posterior', 'marginal', 'posterior', 'save_posterior', 'summarise',
+    'coverage', 'credibility_of_truth', 'effective_sample_size', 'load_posterior', 'marginal', 'posterior', 'save_posterior', 'summarise',
     'uniform_prior_samples', 'weighted_quantiles',
-    'plot_history', 'plot_marginals', 'plot_posterior', 'plot_true_vs_median',
+    'plot_coverage', 'plot_history', 'plot_marginals', 'plot_posterior', 'plot_true_vs_median',
     'Run', 'load_run', 'nre_loss', 'train', 'TRANSFORMS', 'apply', 'step', 'transform',
 ]
