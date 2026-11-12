@@ -42,7 +42,8 @@ To force a device, set `DEVICE = 'cpu'` (or `'cuda'`, `'mps'`) in the first cell
 | Notebook | What it shows |
 |---|---|
 | `01_quickstart.ipynb` | The whole workflow on a toy model (an absorption line on a continuum), with explanations. |
-| `02_your_own_grid.ipynb` | A template: point it at your own grid, choose parameters and inputs in one settings cell, train and check. |
+| `02_joint_posterior_mcmc.ipynb` | The same toy model with one joint group of all parameters, sampled with MCMC; compares re-weighting and MCMC and explains when sampling is needed. |
+| `03_your_own_grid.ipynb` | A template: point it at your own grid, choose parameters and inputs in one settings cell, train and check. |
 
 ## The workflow in code
 
